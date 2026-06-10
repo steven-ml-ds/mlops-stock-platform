@@ -14,10 +14,15 @@ import logging
 import mlflow
 from mlflow import MlflowClient
 
+import json
+
+import pandas as pd
+
 from platform_core.config import (
     MLFLOW_TRACKING_URI,
     PRODUCTION_ALIAS,
     REGISTERED_MODEL_NAME,
+    SHADOW_LOG,
 )
 from platform_core.evaluate import direction_metrics
 from platform_core.features import FEATURES, TARGET_DIR, TECH_FEATURES, build_dataset
@@ -55,6 +60,46 @@ def check_decay(recent_days: int = RECENT_DAYS) -> dict:
 
     result = {"model_version": mv.version, "degraded": degraded, **metrics}
     log.info("decay check: %s", result)
+    return result
+
+
+def compare_shadow(min_rows: int = 30) -> dict:
+    """Live-traffic comparison: join shadow log with realized outcomes.
+
+    Each shadow record stores both models' prob_up for (date, ticker);
+    once the next day's return realizes, both predictions can be scored
+    on identical real traffic — stronger evidence than any holdout.
+    """
+    if not SHADOW_LOG.exists():
+        return {"status": "no shadow log yet"}
+    records = [json.loads(line) for line in SHADOW_LOG.read_text().splitlines()]
+    shadow = (
+        pd.DataFrame(records)
+        .drop_duplicates(subset=["date", "ticker"], keep="last")
+        .assign(date=lambda d: pd.to_datetime(d["date"]))
+    )
+
+    realized = build_dataset()[["ticker", TARGET_DIR]].reset_index()
+    joined = shadow.merge(realized, on=["date", "ticker"], how="inner")
+    result: dict = {"n_scored": len(joined), "n_pending": len(shadow) - len(joined)}
+    if len(joined) < min_rows:
+        result["status"] = f"accumulating ({len(joined)}/{min_rows} scored rows)"
+        return result
+
+    y = joined[TARGET_DIR]
+    prod_acc = float(((joined["prod_proba"] > 0.5).astype(int) == y).mean())
+    chall_acc = float(((joined["chall_proba"] > 0.5).astype(int) == y).mean())
+    result.update({"prod_accuracy": prod_acc, "chall_accuracy": chall_acc})
+
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(MONITOR_EXPERIMENT)
+    with mlflow.start_run(run_name="shadow-comparison"):
+        mlflow.log_metrics({
+            "shadow_n_scored": len(joined),
+            "shadow_prod_accuracy": prod_acc,
+            "shadow_chall_accuracy": chall_acc,
+        })
+    log.info("shadow comparison: %s", result)
     return result
 
 

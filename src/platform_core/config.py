@@ -16,3 +16,5 @@ MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://127.0.0.1:50
 EXPERIMENT_NAME = "stock-direction"
 REGISTERED_MODEL_NAME = "stock-predictor"
 PRODUCTION_ALIAS = "production"
+CHALLENGER_ALIAS = "challenger"  # shadow model: scored on live traffic, never answers
+SHADOW_LOG = PROJECT_ROOT / "data" / "predictions" / "shadow.jsonl"

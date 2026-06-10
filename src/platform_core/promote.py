@@ -23,6 +23,7 @@ import pandas as pd
 from mlflow import MlflowClient
 
 from platform_core.config import (
+    CHALLENGER_ALIAS,
     MLFLOW_TRACKING_URI,
     PRODUCTION_ALIAS,
     REGISTERED_MODEL_NAME,
@@ -132,11 +133,22 @@ def compare_and_promote(
     except Exception:
         champion_v, champion_metrics, win_prob = None, None, None
 
-    # 3. decide and (maybe) move the pointer
+    # 3. decide and (maybe) move the pointers
+    # @challenger always tracks the most interesting non-production model:
+    # the losing challenger (keep watching it in shadow) or, on promotion,
+    # the displaced champion (evidence for/against a rollback)
     promoted = should_promote(champion_metrics, challenger_metrics, win_prob, threshold)
     if promoted:
         client.set_registered_model_alias(
             REGISTERED_MODEL_NAME, PRODUCTION_ALIAS, challenger_version
+        )
+        if champion_v is not None:
+            client.set_registered_model_alias(
+                REGISTERED_MODEL_NAME, CHALLENGER_ALIAS, champion_v.version
+            )
+    else:
+        client.set_registered_model_alias(
+            REGISTERED_MODEL_NAME, CHALLENGER_ALIAS, challenger_version
         )
 
     result = {
