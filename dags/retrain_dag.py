@@ -39,6 +39,16 @@ def weekly_retrain():
             return {"degraded": None, "note": str(exc)}
 
     @task
+    def check_feature_drift(n_rows: int) -> dict:
+        """Early-warning layer: PSI of inputs vs the production training era."""
+        from platform_core.drift import check_drift
+
+        try:
+            return check_drift()
+        except Exception as exc:  # cold start: no production model yet
+            return {"drift_flag": None, "note": str(exc)}
+
+    @task
     def train_challenger(decay: dict) -> str:
         from platform_core.promote import DEFAULT_PARAMS
         from platform_core.train import train_once
@@ -51,7 +61,12 @@ def weekly_retrain():
 
         return compare_and_promote(challenger_run_id, threshold=WIN_PROB_THRESHOLD)
 
-    promote_if_better(train_challenger(check_production_decay(fetch_data())))
+    rows = fetch_data()
+    drift = check_feature_drift(rows)
+    decay = check_production_decay(rows)
+    challenger = train_challenger(decay)
+    drift >> challenger
+    promote_if_better(challenger)
 
 
 weekly_retrain()
