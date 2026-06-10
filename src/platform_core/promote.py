@@ -57,16 +57,15 @@ def _score_version(client: MlflowClient, version: str, holdout) -> dict:
     return direction_metrics(holdout[TARGET_DIR], model.predict_proba(X)[:, 1])
 
 
-def run_promotion(min_edge: float = 0.0, params: dict | None = None) -> dict:
+def compare_and_promote(challenger_run_id: str, min_edge: float = 0.0) -> dict:
+    """Steps 2–3 for an already-registered challenger (Airflow passes the
+    run_id via XCom from the training task)."""
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     client = MlflowClient()
-
-    # 1. challenger: fresh training run, registered as a new version
-    run_id = train_once(params or DEFAULT_PARAMS, run_name="challenger", register=True)
     challenger_version = next(
         v.version
         for v in client.search_model_versions(f"name='{REGISTERED_MODEL_NAME}'")
-        if v.run_id == run_id
+        if v.run_id == challenger_run_id
     )
 
     # 2. score both on the same current holdout
@@ -97,6 +96,13 @@ def run_promotion(min_edge: float = 0.0, params: dict | None = None) -> dict:
     }
     log.info("promotion result: %s", result)
     return result
+
+
+def run_promotion(min_edge: float = 0.0, params: dict | None = None) -> dict:
+    """Train a fresh challenger then run the comparison gate (manual entry point)."""
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    run_id = train_once(params or DEFAULT_PARAMS, run_name="challenger", register=True)
+    return compare_and_promote(run_id, min_edge=min_edge)
 
 
 if __name__ == "__main__":

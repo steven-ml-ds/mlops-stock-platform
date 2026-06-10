@@ -1,0 +1,7 @@
+# Extra deps the retrain DAG needs inside the Airflow image.
+# Kept loose: the image's constraints already pin the tricky transitive deps.
+mlflow>=3.0
+lightgbm>=4.3
+scikit-learn>=1.5
+pandas>=2.2
+yfinance>=0.2

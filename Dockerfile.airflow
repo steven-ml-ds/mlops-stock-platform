@@ -1,0 +1,11 @@
+FROM apache/airflow:3.1.0-python3.12
+
+# LightGBM needs OpenMP at runtime; the slim base image ships without it
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+USER airflow
+
+COPY requirements-airflow.txt /tmp/requirements-airflow.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-airflow.txt
