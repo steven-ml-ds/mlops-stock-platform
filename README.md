@@ -1,5 +1,7 @@
 # mlops-stock-platform
 
+[![ci](https://github.com/steven-ml-ds/mlops-stock-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/steven-ml-ds/mlops-stock-platform/actions/workflows/ci.yml)
+
 An end-to-end **ML platform** demo built on real MLflow: experiment tracking,
 model registry with alias-based promotion, automated weekly retraining via
 Airflow, and zero-downtime model serving with FastAPI — all running locally
