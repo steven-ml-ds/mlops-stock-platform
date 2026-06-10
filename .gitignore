@@ -1,0 +1,33 @@
+# Personal study notes (Chinese MDs) — not published
+docs/notes/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dist/
+
+# MLflow local artifacts (server data lives in docker volume)
+mlruns/
+mlartifacts/
+mlflow.db
+
+# Airflow runtime
+airflow/logs/
+airflow/*.pid
+airflow/airflow.db
+
+# EDA outputs (regenerable)
+charts/
+
+# Data: cache CSVs ARE committed as offline fallback; ignore everything else
+data/*
+!data/cache/
+data/cache/*
+!data/cache/*.csv
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

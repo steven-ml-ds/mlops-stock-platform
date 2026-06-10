@@ -1,0 +1,73 @@
+"""Fetch daily OHLCV from yfinance with a committed CSV cache as offline fallback.
+
+The cache serves two purposes:
+1. Reproducibility — the repo trains end-to-end without network access.
+2. Resilience — if Yahoo Finance is down or rate-limits, we fall back to the
+   last good snapshot instead of failing the pipeline.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import date, timedelta
+
+import pandas as pd
+import yfinance as yf
+
+from platform_core.config import CONTEXT_TICKERS, DATA_DIR, HISTORY_YEARS, TICKERS
+
+log = logging.getLogger(__name__)
+
+COLUMNS = ["open", "high", "low", "close", "volume"]
+
+
+def _cache_path(ticker: str):
+    return DATA_DIR / f"{ticker.replace('^', '_IDX_')}.csv"
+
+
+def fetch_ticker(ticker: str, years: int = HISTORY_YEARS) -> pd.DataFrame:
+    """Download adjusted daily OHLCV; on failure fall back to cached CSV.
+
+    auto_adjust=True folds splits/dividends into OHLC so downstream features
+    never see artificial price jumps.
+    """
+    start = date.today() - timedelta(days=int(years * 365.25))
+    try:
+        raw = yf.download(
+            ticker, start=start.isoformat(), auto_adjust=True, progress=False
+        )
+        if raw is None or raw.empty:
+            raise ValueError(f"empty frame for {ticker}")
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = raw.columns.get_level_values(0)
+        df = raw.rename(columns=str.lower)[COLUMNS].copy()
+        df.index.name = "date"
+        _cache_path(ticker).parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(_cache_path(ticker))
+        log.info("fetched %s: %d rows -> cached", ticker, len(df))
+        return df
+    except Exception as exc:  # network, rate-limit, schema drift
+        log.warning("download failed for %s (%s); trying cache", ticker, exc)
+        return load_cached(ticker)
+
+
+def load_cached(ticker: str) -> pd.DataFrame:
+    path = _cache_path(ticker)
+    if not path.exists():
+        raise FileNotFoundError(f"no cache for {ticker} at {path}")
+    return pd.read_csv(path, index_col="date", parse_dates=True)
+
+
+def fetch_all(refresh: bool = True) -> dict[str, pd.DataFrame]:
+    """Return {ticker: ohlcv} for all model + context tickers."""
+    out = {}
+    for ticker in TICKERS + CONTEXT_TICKERS:
+        out[ticker] = fetch_ticker(ticker) if refresh else load_cached(ticker)
+    return out
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    frames = fetch_all(refresh=True)
+    for name, frame in frames.items():
+        print(f"{name:8s} {len(frame):5d} rows  {frame.index.min():%Y-%m-%d} → {frame.index.max():%Y-%m-%d}")
