@@ -1,4 +1,4 @@
-.PHONY: setup data eda train experiments test mlflow-up mlflow-down
+.PHONY: setup data eda train experiments test mlflow-up mlflow-down up down promote monitor serve
 
 setup:            ## install deps into .venv
 	uv sync
@@ -24,6 +24,21 @@ experiments:      ## the comparison grid from docs/notes/03
 	uv run python -m platform_core.train --run-name lr10-shallow --learning-rate 0.10 --num-leaves 7 --n-estimators 150
 	uv run python -m platform_core.train --run-name shallow-slow --learning-rate 0.03 --num-leaves 7 --n-estimators 400
 	uv run python -m platform_core.train --run-name base-tech --with-tech
+
+up:               ## full stack: mlflow + airflow + api
+	docker compose up -d
+
+down:
+	docker compose down
+
+promote:          ## train a challenger and run the promotion gate
+	uv run python -m platform_core.promote
+
+monitor:          ## decay check on the production model
+	uv run python -m platform_core.monitor
+
+serve:            ## run the API locally (outside docker)
+	uv run uvicorn app.main:app --port 8000
 
 test:
 	uv run pytest -q

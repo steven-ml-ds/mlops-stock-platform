@@ -28,7 +28,18 @@ def weekly_retrain():
         return sum(len(f) for f in frames.values())
 
     @task
-    def train_challenger(n_rows: int) -> str:
+    def check_production_decay(n_rows: int) -> dict:
+        """Informational gate: logs recent production accuracy to MLflow.
+        The weekly retrain proceeds regardless; this trends the decay signal."""
+        from platform_core.monitor import check_decay
+
+        try:
+            return check_decay()
+        except Exception as exc:  # cold start: no production model yet
+            return {"degraded": None, "note": str(exc)}
+
+    @task
+    def train_challenger(decay: dict) -> str:
         from platform_core.promote import DEFAULT_PARAMS
         from platform_core.train import train_once
 
@@ -40,7 +51,7 @@ def weekly_retrain():
 
         return compare_and_promote(challenger_run_id, min_edge=DEFAULT_MIN_EDGE)
 
-    promote_if_better(train_challenger(fetch_data()))
+    promote_if_better(train_challenger(check_production_decay(fetch_data())))
 
 
 weekly_retrain()
