@@ -11,18 +11,42 @@ import argparse
 import logging
 
 import lightgbm as lgb
+import matplotlib
 import mlflow
 import numpy as np
 import pandas as pd
+from sklearn.metrics import brier_score_loss
 
+from platform_core.calibration import (
+    CalibratedDirectionModel,
+    fit_calibrator,
+    reliability_curve,
+)
 from platform_core.config import EXPERIMENT_NAME, MLFLOW_TRACKING_URI
 from platform_core.evaluate import direction_metrics, holdout_split
 from platform_core.features import FEATURES, TARGET_DIR, TECH_FEATURES, build_dataset
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+
+
+def _reliability_figure(y_true, raw_proba, cal_proba):
+    fig, ax = plt.subplots(figsize=(6, 6))
+    for label, proba in (("raw", raw_proba), ("calibrated", cal_proba)):
+        mp, obs, _ = reliability_curve(y_true, proba)
+        ax.plot(mp, obs, "o-", label=label)
+    ax.plot([0, 1], [0, 1], "k--", lw=0.8, label="perfect")
+    ax.set_xlabel("mean predicted prob_up")
+    ax.set_ylabel("observed up-rate")
+    ax.set_title("Reliability diagram (holdout)")
+    ax.legend()
+    return fig
 
 log = logging.getLogger(__name__)
 
 CV_FOLDS = 5
 PURGE_GAP_DAYS = 5  # dead zone between train end and validation start
+CALIBRATION_DAYS = 120  # tail of the dev window reserved for isotonic fit
 
 
 def walk_forward_splits(dates: pd.Index, n_folds: int = CV_FOLDS, gap: int = PURGE_GAP_DAYS):
@@ -70,6 +94,8 @@ def train_once(params: dict, with_tech: bool = False, run_name: str | None = Non
         mlflow.log_params(params)
         mlflow.log_params({
             "with_tech": with_tech,
+            "calibration": "isotonic",
+            "calibration_days": CALIBRATION_DAYS,
             "n_features": len(feature_cols),
             "n_rows_dev": len(dev),
             "n_rows_holdout": len(holdout),
@@ -93,13 +119,29 @@ def train_once(params: dict, with_tech: bool = False, run_name: str | None = Non
             "cv_auc_mean": float(np.mean(cv_auc)),
         })
 
-        # ---- final fit on all dev data, scored on the untouched holdout
-        model = make_model(params)
-        model.fit(dev[X_cols], dev[TARGET_DIR], categorical_feature=["ticker"])
-        hold = direction_metrics(
-            holdout[TARGET_DIR], model.predict_proba(holdout[X_cols])[:, 1]
-        )
+        # ---- final fit + time-ordered isotonic calibration, scored on holdout
+        # base learns on dev minus the calibration tail; the calibrator maps the
+        # base's raw scores to honest probabilities on data it never trained on
+        dev_dates = dev.index.unique().sort_values()
+        cal_start = dev_dates[-CALIBRATION_DAYS]
+        fit_part, cal_part = dev[dev.index < cal_start], dev[dev.index >= cal_start]
+        base = make_model(params)
+        base.fit(fit_part[X_cols], fit_part[TARGET_DIR], categorical_feature=["ticker"])
+        raw_cal = base.predict_proba(cal_part[X_cols])[:, 1]
+        model = CalibratedDirectionModel(base, fit_calibrator(raw_cal, cal_part[TARGET_DIR]))
+
+        raw_hold = base.predict_proba(holdout[X_cols])[:, 1]
+        cal_hold = model.predict_proba(holdout[X_cols])[:, 1]
+        hold = direction_metrics(holdout[TARGET_DIR], cal_hold)
         mlflow.log_metrics({f"holdout_{k}": v for k, v in hold.items()})
+        mlflow.log_metric(
+            "holdout_brier_uncalibrated",
+            float(brier_score_loss(holdout[TARGET_DIR], raw_hold)),
+        )
+        mlflow.log_figure(
+            _reliability_figure(holdout[TARGET_DIR], raw_hold, cal_hold),
+            "reliability_diagram.png",
+        )
 
         example = dev[X_cols].tail(3)
         mlflow.sklearn.log_model(

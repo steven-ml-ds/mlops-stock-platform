@@ -9,7 +9,7 @@ from datetime import datetime
 
 from airflow.sdk import dag, task
 
-DEFAULT_MIN_EDGE = 0.0
+WIN_PROB_THRESHOLD = 0.60
 
 
 @dag(
@@ -49,7 +49,7 @@ def weekly_retrain():
     def promote_if_better(challenger_run_id: str) -> dict:
         from platform_core.promote import compare_and_promote
 
-        return compare_and_promote(challenger_run_id, min_edge=DEFAULT_MIN_EDGE)
+        return compare_and_promote(challenger_run_id, threshold=WIN_PROB_THRESHOLD)
 
     promote_if_better(train_challenger(check_production_decay(fetch_data())))
 
