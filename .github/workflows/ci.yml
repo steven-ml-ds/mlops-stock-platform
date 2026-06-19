@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        dockerfile: [Dockerfile.api, Dockerfile.airflow]
+        dockerfile: [Dockerfile.api, Dockerfile.airflow, Dockerfile.dashboard]
     steps:
       - uses: actions/checkout@v4
       - run: docker build -f ${{ matrix.dockerfile }} -t ci-check .

@@ -44,3 +44,14 @@ def test_predict_proba_accepts_string_ticker():
     string = model.predict_proba(X_str)[:, 1]
 
     np.testing.assert_allclose(cat, string)
+
+
+def test_old_pickle_without_categoricals_still_serves():
+    """A model pickled before `categoricals` existed must serve without AttributeError —
+    unpickling restores __dict__ and skips __init__, so the class-level default must apply."""
+    model, X = _fit_model()
+    legacy = CalibratedDirectionModel.__new__(CalibratedDirectionModel)
+    legacy.base = model.base
+    legacy.calibrator = model.calibrator  # note: no `categoricals` in __dict__
+    proba = legacy.predict_proba(X)  # must not raise
+    assert proba.shape == (len(X), 2)

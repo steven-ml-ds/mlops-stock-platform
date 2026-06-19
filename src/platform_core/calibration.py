@@ -25,6 +25,11 @@ class CalibratedDirectionModel:
     this, LightGBM raises "train and valid dataset categorical_feature do not match".
     """
 
+    # Class-level default so models pickled before this attribute existed (e.g. an already
+    # registered production version) unpickle and serve without AttributeError — they simply
+    # skip coercion, matching their original behaviour.
+    categoricals: dict[str, list] = {}
+
     def __init__(self, base, calibrator: IsotonicRegression,
                  categoricals: dict[str, list] | None = None):
         self.base = base
