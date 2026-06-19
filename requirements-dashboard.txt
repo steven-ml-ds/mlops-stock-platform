@@ -1,0 +1,6 @@
+streamlit>=1.40
+plotly>=5.0
+minio>=7.2
+mlflow>=3.0
+pandas>=2.2
+yfinance>=0.2
