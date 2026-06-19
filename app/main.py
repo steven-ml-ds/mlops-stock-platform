@@ -91,6 +91,11 @@ class ModelManager:
 
 def _proba_up(slot: AliasSlot, row: pd.DataFrame) -> float:
     X = row[slot.feature_cols + ["ticker"]].copy()
+    # Hand the model a categorical ticker, not a raw string (LightGBM rejects the latter with
+    # "categorical_feature do not match"). Models trained since the wrapper gained `categoricals`
+    # re-impose their own training categories and ignore this; older registered models predate
+    # that and rely on this coercion — so it stays for rollback safety. LightGBM realigns the
+    # category set by value, so a superset here is fine for a model trained on fewer tickers.
     X["ticker"] = pd.Categorical(X["ticker"], categories=TICKERS)
     return float(slot.model.predict_proba(X)[0, 1])
 
