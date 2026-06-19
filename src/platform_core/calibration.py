@@ -8,6 +8,7 @@ prob_up to users, so we calibrate on the most recent slice of the dev window
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 from sklearn.isotonic import IsotonicRegression
 
 
@@ -16,14 +17,31 @@ class CalibratedDirectionModel:
 
     Picklable via cloudpickle, so it rides through MLflow's sklearn flavor
     and loads identically in the API and Airflow containers.
+
+    ``categoricals`` maps each categorical feature to the full category list seen at fit time.
+    ``predict_proba`` re-imposes it, so the model predicts correctly even when a consumer
+    passes the column as plain strings — e.g. MLflow's serving-input validation, which
+    round-trips the input example through JSON and drops the pandas category dtype. Without
+    this, LightGBM raises "train and valid dataset categorical_feature do not match".
     """
 
-    def __init__(self, base, calibrator: IsotonicRegression):
+    def __init__(self, base, calibrator: IsotonicRegression,
+                 categoricals: dict[str, list] | None = None):
         self.base = base
         self.calibrator = calibrator
+        self.categoricals = categoricals or {}
+
+    def _coerce(self, X):
+        if not self.categoricals or not isinstance(X, pd.DataFrame):
+            return X
+        X = X.copy()
+        for col, cats in self.categoricals.items():
+            if col in X.columns:
+                X[col] = pd.Categorical(X[col], categories=cats)
+        return X
 
     def predict_proba(self, X) -> np.ndarray:
-        raw = self.base.predict_proba(X)[:, 1]
+        raw = self.base.predict_proba(self._coerce(X))[:, 1]
         cal = self.calibrator.predict(raw)
         return np.column_stack([1.0 - cal, cal])
 

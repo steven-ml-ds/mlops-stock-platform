@@ -59,11 +59,31 @@ def load_cached(ticker: str) -> pd.DataFrame:
 
 
 def fetch_all(refresh: bool = True) -> dict[str, pd.DataFrame]:
-    """Return {ticker: ohlcv} for all model + context tickers."""
-    out = {}
-    for ticker in TICKERS + CONTEXT_TICKERS:
-        out[ticker] = fetch_ticker(ticker) if refresh else load_cached(ticker)
-    return out
+    """Return {ticker: ohlcv} for all model + context tickers.
+
+    Source priority when ``refresh``:
+      1. the upstream stock-etl-pipeline MinIO store (clean, DQ-gated, adjusted) —
+      2. else per-ticker yfinance with the committed CSV cache as fallback.
+
+    Whatever the source, every frame is written back to the CSV cache so ``load_cached``
+    (used for context series in features.build_dataset) and offline reproducibility keep
+    working without an ETL stack.
+    """
+    all_tickers = TICKERS + CONTEXT_TICKERS
+    if not refresh:
+        return {t: load_cached(t) for t in all_tickers}
+
+    from platform_core import etl_source
+
+    frames = etl_source.load_from_etl(all_tickers)
+    if frames is not None:
+        for ticker, df in frames.items():
+            df.to_csv(_cache_path(ticker))  # materialise the cache mirror
+        log.info("fetched %d tickers from ETL MinIO -> cached", len(frames))
+        return frames
+
+    log.info("ETL source unavailable; falling back to yfinance/CSV per ticker")
+    return {t: fetch_ticker(t) for t in all_tickers}
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-.PHONY: setup data eda train experiments test mlflow-up mlflow-down up down promote monitor serve
+.PHONY: setup data eda train experiments test mlflow-up mlflow-down up down promote monitor serve dashboard
 
 setup:            ## install deps into .venv
 	uv sync
@@ -39,6 +39,9 @@ monitor:          ## decay check on the production model
 
 serve:            ## run the API locally (outside docker)
 	uv run uvicorn app.main:app --port 8000
+
+dashboard:        ## unified Streamlit dashboard (http://localhost:8501)
+	uv run streamlit run app/dashboard.py --server.port 8501
 
 test:
 	uv run pytest -q

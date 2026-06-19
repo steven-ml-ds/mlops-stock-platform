@@ -13,8 +13,9 @@ def test_health_up_without_model():
 
 
 def test_unknown_ticker_404():
+    # A symbol that is not in the configured universe (which now spans 20 S&P 500 names).
     with TestClient(app) as client:
-        assert client.get("/predict", params={"ticker": "TSLA"}).status_code == 404
+        assert client.get("/predict", params={"ticker": "NOTATICKER"}).status_code == 404
 
 
 def test_predict_503_when_no_model():

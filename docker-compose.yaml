@@ -61,12 +61,42 @@ services:
         condition: service_started
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
+      # Reach the stock-etl-pipeline's MinIO over the shared umbrella network (service name).
+      MINIO_ENDPOINT: minio:9000
     ports:
       - "8000:8000"
+    networks: [default, stock-net]
     volumes:
       - ./data:/srv/data   # feature building reads the OHLCV cache
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    depends_on:
+      api:
+        condition: service_started
+      mlflow:
+        condition: service_started
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      API_URL: http://api:8000
+      MINIO_ENDPOINT: minio:9000   # ETL store over the shared network
+    ports:
+      - "8501:8501"
+    networks: [default, stock-net]
     restart: unless-stopped
 
 volumes:
   mlflow-data:
   postgres-db:
+
+# Shared network with the stock-etl-pipeline stack so api/dashboard can resolve its `minio`
+# by service name. External: create once with `docker network create stock-net` (the umbrella
+# compose / its README documents this). A standalone `docker compose up` here still works — the
+# ETL source is optional and fetch_all falls back to the CSV cache when MinIO is unreachable.
+networks:
+  default:
+  stock-net:
+    external: true

@@ -128,7 +128,11 @@ def train_once(params: dict, with_tech: bool = False, run_name: str | None = Non
         base = make_model(params)
         base.fit(fit_part[X_cols], fit_part[TARGET_DIR], categorical_feature=["ticker"])
         raw_cal = base.predict_proba(cal_part[X_cols])[:, 1]
-        model = CalibratedDirectionModel(base, fit_calibrator(raw_cal, cal_part[TARGET_DIR]))
+        model = CalibratedDirectionModel(
+            base,
+            fit_calibrator(raw_cal, cal_part[TARGET_DIR]),
+            categoricals={"ticker": list(ds["ticker"].cat.categories)},
+        )
 
         raw_hold = base.predict_proba(holdout[X_cols])[:, 1]
         cal_hold = model.predict_proba(holdout[X_cols])[:, 1]
@@ -143,7 +147,11 @@ def train_once(params: dict, with_tech: bool = False, run_name: str | None = Non
             "reliability_diagram.png",
         )
 
-        example = dev[X_cols].tail(3)
+        # MLflow can't serialize a pandas category column; hand it a plain-string ticker so
+        # signature inference and serving-input validation round-trip cleanly (the wrapper
+        # re-imposes the categories at predict time).
+        example = dev[X_cols].tail(3).copy()
+        example["ticker"] = example["ticker"].astype(str)
         mlflow.sklearn.log_model(
             model,
             name="model",
