@@ -12,16 +12,21 @@ deliberately reported honestly (~1–3pp over a coin flip). The deliverable is
 the **platform engineering**, not alpha.
 
 ```
-yfinance ──► data/cache ──► features ──► train ──► MLflow Tracking (experiments)
-                                          │
-                                          ▼
-                                  MLflow Model Registry
-                                  stock-predictor @production
-                                          │
-        Airflow DAG (weekly):             ▼
-        fetch → decay check →      FastAPI  /predict /model-info /health
-        train challenger →         (TTL poll on the alias → hot-swaps the
-        promote if better          model when promotion moves the pointer)
+stock-etl-pipeline's MinIO ──► data/cache ──► features ──► train ──► MLflow Tracking (experiments)
+(20 tickers + SPY/VIX/yield-      ▲                                          │
+ curve context; falls back to     │                                         ▼
+ yfinance if unreachable)     Airflow DAG (weekly):              MLflow Model Registry
+                               fetch → decay check →              stock-predictor @production
+                               train challenger →                          │
+                               promote if better                           ▼
+                                                                   FastAPI  /predict /model-info /health
+                                                                   (TTL poll on the alias → hot-swaps the
+                                                                   model when promotion moves the pointer)
+                                                                             │
+                                                                             ▼
+                                                                   Streamlit dashboard
+                                                          (data freshness, live prediction,
+                                                           champion vs challenger, decay trend)
 ```
 
 ## What it demonstrates
@@ -40,14 +45,16 @@ yfinance ──► data/cache ──► features ──► train ──► MLflo
 
 ```bash
 # prerequisites: docker, uv
+docker network create stock-net   # one-time, skip if it already exists (see Data source)
 uv sync                       # local env (Python 3.12)
-docker compose up -d          # mlflow (5001), airflow (8081), api (8000), postgres
+docker compose up -d          # mlflow (5001), airflow (8081), api (8000), dashboard (8501), postgres
 
 make experiments              # 5 comparable runs in MLflow UI
 uv run python -m platform_core.promote     # train challenger, maybe promote
 
 curl "localhost:8000/predict?ticker=AAPL"
 curl  localhost:8000/model-info             # which version is serving right now
+make dashboard                              # unified Streamlit dashboard (or use the compose service)
 
 # trigger the weekly pipeline by hand
 docker compose exec airflow airflow dags trigger weekly_retrain
@@ -55,10 +62,21 @@ docker compose exec airflow airflow dags trigger weekly_retrain
 
 - MLflow UI: http://127.0.0.1:5001
 - Airflow UI: http://127.0.0.1:8081 (auth disabled — local demo only)
+- Dashboard: http://127.0.0.1:8501
 - API docs: http://127.0.0.1:8000/docs
 
 Committed OHLCV snapshots under `data/cache/` make everything above work
 offline; the fetch step refreshes them when the network allows.
+
+## Data source
+
+`fetch_all` (`src/platform_core/data.py`, via `etl_source.py`) prefers the sibling
+**stock-etl-pipeline**'s MinIO store — clean, DQ-gated OHLCV for the 20-ticker universe plus
+`SPY`/`^VIX`/`^TNX`/`^IRX` context series — over hitting yfinance directly, falling back to the
+CSV cache then yfinance if MinIO is unreachable. `api` and `dashboard` join an external
+`stock-net` Docker network to resolve it as `minio:9000`; create it once with
+`docker network create stock-net` before `docker compose up` (a standalone `up` still works
+without the ETL repo running — the fallback chain just kicks in).
 
 ## Design choices (and trade-offs)
 
@@ -77,15 +95,16 @@ offline; the fetch step refreshes them when the network allows.
   make point-in-time alignment a leakage trap; daily market-traded proxies
   (yield-curve slope, VIX) carry the macro signal instead.
 - **Thin data layer by design** — heavy ETL/data-quality engineering lives in
-  a separate project; this repo spends its complexity budget on the model
-  lifecycle.
+  the sibling `stock-etl-pipeline` project (see Data source); this repo consumes
+  its published output over `etl_source.py` and spends its own complexity
+  budget on the model lifecycle.
 
 ## Layout
 
 ```
-src/platform_core/  config · data · features · train · evaluate · promote · monitor
+src/platform_core/  config · data (+ etl_source: MinIO handoff) · features · train · evaluate · promote · monitor
 dags/               weekly_retrain (Airflow 3 TaskFlow)
-app/                FastAPI serving
+app/                FastAPI serving (main.py) · unified Streamlit dashboard (dashboard.py)
 scripts/eda.py      the EDA gate that finalized the feature set
 tests/              leakage guards · promotion rule · API smoke
 ```
